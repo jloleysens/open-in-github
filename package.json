@@ -1,0 +1,89 @@
+{
+  "name": "open-in-github",
+  "displayName": "Open in GitHub",
+  "description": "Open the current file in the upstream GitHub repository",
+  "version": "1.0.0",
+  "publisher": "kibana-dev",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:openInGithub.openFile"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "openInGithub.openFile",
+        "title": "Open File in GitHub",
+        "category": "GitHub"
+      },
+      {
+        "command": "openInGithub.openFileAtLine",
+        "title": "Open File in GitHub (at current line)",
+        "category": "GitHub"
+      },
+      {
+        "command": "openInGithub.openRepository",
+        "title": "Open Repository in GitHub",
+        "category": "GitHub"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "openInGithub.openFile",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "openInGithub.openFileAtLine",
+        "key": "ctrl+shift+alt+g",
+        "mac": "cmd+shift+alt+g",
+        "when": "editorTextFocus"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "openInGithub.openFile",
+          "when": "resourceScheme == file",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "openInGithub.openFile",
+          "when": "resourceScheme == file",
+          "group": "navigation"
+        },
+        {
+          "command": "openInGithub.openFileAtLine",
+          "when": "resourceScheme == file",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Open in GitHub",
+      "properties": {
+        "openInGithub.repositoryUrl": {
+          "type": "string",
+          "default": "https://github.com/elastic/kibana",
+          "description": "The GitHub repository URL to open files in"
+        },
+        "openInGithub.useCommitHash": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use commit hash instead of branch name in URLs"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "open": "^10.2.0"
+  }
+}
