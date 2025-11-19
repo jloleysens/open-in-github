@@ -40,11 +40,35 @@ The extension can be configured in VS Code settings:
 
 ## Installation
 
-This extension is designed to be installed locally in your workspace:
+### Quick Install (Recommended)
 
-1. Place the extension files in `.vscode/extensions/open-in-github/`
-2. Reload VS Code or restart the application
-3. The extension will be automatically activated
+> [!IMPORTANT]
+> This extension is not published to VSCode marketplace or anywhere else. It has no automated tests and it was generated using Claude Code. Use at your own risk.
+
+Run the installation script to automatically download and install the extension:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jloleysens/open-in-github/main/install.sh | bash
+```
+
+Or download and run manually:
+
+```bash
+wget https://raw.githubusercontent.com/jloleysens/open-in-github/main/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+After installation, restart Cursor for the extension to be loaded.
+
+### Manual Installation
+
+Alternatively, you can install manually:
+
+1. Clone or download this repository
+2. Copy the extension files to `~/.cursor/extensions/open-in-github/`
+3. Run `npm install` in the extension directory
+4. Restart Cursor
 
 ## Troubleshooting
 
