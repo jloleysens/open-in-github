@@ -2,6 +2,9 @@
 
 A simple VS Code extension that allows you to quickly open the current file in the upstream GitHub repository.
 
+> [!IMPORTANT]
+> This extension is not published to VSCode marketplace or anywhere else. It has no automated tests and it was generated using Claude Code. Use at your own risk.
+
 ## Features
 
 - **Open File in GitHub**: Opens the current file in GitHub at the current branch/commit
@@ -79,5 +82,3 @@ Alternatively, you can install manually:
 ## Development
 
 This extension is built for the Kibana development environment and is configured to work with the Elastic Kibana repository by default.
-
-
