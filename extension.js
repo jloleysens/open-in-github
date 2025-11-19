@@ -82,7 +82,7 @@ function constructGitHubUrl(repositoryUrl, gitRef, relativePath, lineNumber = nu
  * @param {string} url - The URL to open
  */
 async function openInBrowser(url) {
-    const open = require('open');
+    const {default: open} = require('open');
     await open(url);
 }
 
@@ -178,6 +178,152 @@ async function openRepositoryInGitHub() {
 }
 
 /**
+ * Get the commit hash for a specific line using git blame
+ * @param {string} gitRoot - The git repository root
+ * @param {string} filePath - The absolute file path
+ * @param {number} lineNumber - The line number (1-based)
+ * @returns {Promise<string|null>} - The commit hash or null if not found
+ */
+async function getCommitHashFromBlame(gitRoot, filePath, lineNumber) {
+    try {
+        const relativePath = getRelativePath(filePath, gitRoot);
+        const { stdout } = await execAsync(
+            `git blame -L ${lineNumber},${lineNumber} --porcelain "${relativePath}"`,
+            { cwd: gitRoot }
+        );
+
+        // Parse git blame output to extract commit hash
+        // The first line contains the commit hash
+        const lines = stdout.split('\n');
+        if (lines.length > 0) {
+            const match = lines[0].match(/^([a-f0-9]{40})/);
+            if (match) {
+                return match[1];
+            }
+        }
+        return null;
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Extract PR number from commit message
+ * @param {string} gitRoot - The git repository root
+ * @param {string} commitHash - The commit hash
+ * @returns {Promise<string|null>} - The PR number or null if not found
+ */
+async function getPRNumberFromCommit(gitRoot, commitHash) {
+    try {
+        const { stdout } = await execAsync(`git log -1 --format=%B ${commitHash}`, { cwd: gitRoot });
+        const commitMessage = stdout;
+
+        // Try various patterns to find PR number
+        // Pattern 1: Merge pull request #123
+        let match = commitMessage.match(/Merge pull request #(\d+)/i);
+        if (match) {
+            return match[1];
+        }
+
+        // Pattern 2: fixes #123, closes #123, resolves #123, etc.
+        match = commitMessage.match(/(?:fixes?|closes?|resolves?|refs?)[\s:]*#(\d+)/i);
+        if (match) {
+            return match[1];
+        }
+
+        // Pattern 3: Just #123 (standalone PR reference)
+        match = commitMessage.match(/#(\d+)/);
+        if (match) {
+            return match[1];
+        }
+
+        return null;
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Extract organization and repository name from repository URL
+ * @param {string} repositoryUrl - The repository URL
+ * @returns {Object|null} - Object with org and repo properties, or null if invalid
+ */
+function extractOrgAndRepo(repositoryUrl) {
+    try {
+        // Handle different URL formats
+        // https://github.com/org/repo
+        // https://github.com/org/repo.git
+        // git@github.com:org/repo.git
+        let match = repositoryUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+        if (match) {
+            return {
+                org: match[1],
+                repo: match[2]
+            };
+        }
+        return null;
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Open the PR for the last changed line in GitHub
+ */
+async function openPRForLastChangedLine() {
+    try {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            showError('No active editor found');
+            return;
+        }
+
+        const filePath = editor.document.uri.fsPath;
+        const config = vscode.workspace.getConfiguration('openInGithub');
+        const repositoryUrl = config.get('repositoryUrl', 'https://github.com/elastic/kibana');
+
+        // Get git repository root
+        const gitRoot = await getGitRoot(filePath);
+        if (!gitRoot) {
+            showError('File is not in a git repository');
+            return;
+        }
+
+        // Get current line number (1-based for git blame)
+        const lineNumber = editor.selection.active.line + 1;
+
+        // Get commit hash from git blame
+        const commitHash = await getCommitHashFromBlame(gitRoot, filePath, lineNumber);
+        if (!commitHash) {
+            showError('Could not determine commit for this line');
+            return;
+        }
+
+        // Get PR number from commit message
+        const prNumber = await getPRNumberFromCommit(gitRoot, commitHash);
+        if (!prNumber) {
+            showError('Could not find PR number in commit message');
+            return;
+        }
+
+        // Extract org and repo from repository URL
+        const orgRepo = extractOrgAndRepo(repositoryUrl);
+        if (!orgRepo) {
+            showError('Invalid repository URL format');
+            return;
+        }
+
+        // Construct and open PR URL
+        const prUrl = `https://github.com/${orgRepo.org}/${orgRepo.repo}/pull/${prNumber}`;
+        await openInBrowser(prUrl);
+
+        vscode.window.showInformationMessage(`Opened PR #${prNumber} in GitHub`);
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+/**
  * Activate the extension
  * @param {vscode.ExtensionContext} context - The extension context
  */
@@ -197,10 +343,15 @@ function activate(context) {
         openRepositoryInGitHub();
     });
 
+    const openPRForLineCommand = vscode.commands.registerCommand('openInGithub.openPRForLine', () => {
+        openPRForLastChangedLine();
+    });
+
     // Add commands to context for disposal
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(openFileAtLineCommand);
     context.subscriptions.push(openRepositoryCommand);
+    context.subscriptions.push(openPRForLineCommand);
 }
 
 /**

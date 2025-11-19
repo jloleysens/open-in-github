@@ -30,6 +30,11 @@
         "command": "openInGithub.openRepository",
         "title": "Open Repository in GitHub",
         "category": "GitHub"
+      },
+      {
+        "command": "openInGithub.openPRForLine",
+        "title": "Open PR for Last Changed Line",
+        "category": "GitHub"
       }
     ],
     "keybindings": [
@@ -62,6 +67,11 @@
         },
         {
           "command": "openInGithub.openFileAtLine",
+          "when": "resourceScheme == file",
+          "group": "navigation"
+        },
+        {
+          "command": "openInGithub.openPRForLine",
           "when": "resourceScheme == file",
           "group": "navigation"
         }
