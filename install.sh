@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="https://github.com/yourusername/open-in-github"  # Update this with your actual repo URL
+GITHUB_REPO="https://github.com/jloleysens/open-in-github"
 EXTENSION_NAME="open-in-github"
 CURSOR_EXTENSIONS_DIR="$HOME/.cursor/extensions"
 TMP_DIR="/tmp/${EXTENSION_NAME}-install"
