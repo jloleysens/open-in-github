@@ -62,6 +62,122 @@ function getRelativePath(filePath, gitRoot) {
 }
 
 /**
+ * Get the URL for a specific git remote
+ * @param {string} gitRoot - The git repository root
+ * @param {string} remoteName - The name of the remote
+ * @returns {Promise<string|null>} - The remote URL or null if remote doesn't exist
+ */
+async function getRemoteUrl(gitRoot, remoteName) {
+    try {
+        const { stdout } = await execAsync(`git remote get-url ${remoteName}`, { cwd: gitRoot });
+        return stdout.trim();
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Get all git remote names
+ * @param {string} gitRoot - The git repository root
+ * @returns {Promise<string[]>} - Array of remote names
+ */
+async function getAllRemotes(gitRoot) {
+    try {
+        const { stdout } = await execAsync('git remote', { cwd: gitRoot });
+        return stdout.trim().split('\n').filter(name => name.length > 0);
+    } catch (error) {
+        return [];
+    }
+}
+
+/**
+ * Check if a URL points to GitHub
+ * @param {string} url - The URL to check
+ * @returns {boolean} - True if URL points to GitHub
+ */
+function isGitHubUrl(url) {
+    if (!url) return false;
+    // Check for github.com in the URL
+    return /github\.com/.test(url);
+}
+
+/**
+ * Normalize a GitHub URL to https://github.com/org/repo format
+ * @param {string} url - The GitHub URL in any format
+ * @returns {string|null} - Normalized URL or null if invalid
+ */
+function normalizeGitHubUrl(url) {
+    if (!url) return null;
+
+    try {
+        // Handle different URL formats
+        // https://github.com/org/repo
+        // https://github.com/org/repo.git
+        // git@github.com:org/repo.git
+        // ssh://git@github.com/org/repo.git
+        let match = url.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+        if (match) {
+            return `https://github.com/${match[1]}/${match[2]}`;
+        }
+        return null;
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+ * Get GitHub repository URL following strict priority order:
+ * 1. Configuration setting (if exists)
+ * 2. Upstream remote (if exists and points to GitHub)
+ * 3. Origin remote (if exists and points to GitHub)
+ * 4. First GitHub remote from all remotes
+ * 5. null if none found
+ * @param {string} gitRoot - The git repository root
+ * @param {vscode.WorkspaceConfiguration} config - The workspace configuration
+ * @returns {Promise<string|null>} - The GitHub repository URL or null if not found
+ */
+async function getGitHubRepositoryUrl(gitRoot, config) {
+    // 1. Check config first (highest priority)
+    const configUrl = config.get('repositoryUrl');
+    if (configUrl) {
+        return configUrl;
+    }
+
+    // 2. Check upstream remote
+    const upstreamUrl = await getRemoteUrl(gitRoot, 'upstream');
+    if (upstreamUrl && isGitHubUrl(upstreamUrl)) {
+        const normalized = normalizeGitHubUrl(upstreamUrl);
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    // 3. Check origin remote
+    const originUrl = await getRemoteUrl(gitRoot, 'origin');
+    if (originUrl && isGitHubUrl(originUrl)) {
+        const normalized = normalizeGitHubUrl(originUrl);
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    // 4. Check all remotes for first GitHub URL
+    const allRemotes = await getAllRemotes(gitRoot);
+    for (const remote of allRemotes) {
+        const remoteUrl = await getRemoteUrl(gitRoot, remote);
+        if (remoteUrl && isGitHubUrl(remoteUrl)) {
+            const normalized = normalizeGitHubUrl(remoteUrl);
+            if (normalized) {
+                return normalized;
+            }
+        }
+    }
+
+    // 5. Return null if nothing found
+    return null;
+}
+
+/**
  * Construct the GitHub URL for a file
  * @param {string} repositoryUrl - The base repository URL
  * @param {string} gitRef - The git reference (branch or commit)
@@ -108,13 +224,19 @@ async function openFileInGitHub(includeLineNumber = false) {
 
         const filePath = editor.document.uri.fsPath;
         const config = vscode.workspace.getConfiguration('openInGithub');
-        const repositoryUrl = config.get('repositoryUrl', 'https://github.com/elastic/kibana');
         const useCommitHash = config.get('useCommitHash', false);
 
         // Get git repository root
         const gitRoot = await getGitRoot(filePath);
         if (!gitRoot) {
             showError('File is not in a git repository');
+            return;
+        }
+
+        // Get GitHub repository URL with strict priority order
+        const repositoryUrl = await getGitHubRepositoryUrl(gitRoot, config);
+        if (!repositoryUrl) {
+            showError('Could not determine GitHub repository URL. Please configure openInGithub.repositoryUrl or ensure a GitHub remote exists.');
             return;
         }
 
@@ -154,12 +276,18 @@ async function openRepositoryInGitHub() {
 
         const filePath = editor.document.uri.fsPath;
         const config = vscode.workspace.getConfiguration('openInGithub');
-        const repositoryUrl = config.get('repositoryUrl', 'https://github.com/elastic/kibana');
 
         // Get git repository root
         const gitRoot = await getGitRoot(filePath);
         if (!gitRoot) {
             showError('File is not in a git repository');
+            return;
+        }
+
+        // Get GitHub repository URL with strict priority order
+        const repositoryUrl = await getGitHubRepositoryUrl(gitRoot, config);
+        if (!repositoryUrl) {
+            showError('Could not determine GitHub repository URL. Please configure openInGithub.repositoryUrl or ensure a GitHub remote exists.');
             return;
         }
 
@@ -280,12 +408,18 @@ async function openPRForLastChangedLine() {
 
         const filePath = editor.document.uri.fsPath;
         const config = vscode.workspace.getConfiguration('openInGithub');
-        const repositoryUrl = config.get('repositoryUrl', 'https://github.com/elastic/kibana');
 
         // Get git repository root
         const gitRoot = await getGitRoot(filePath);
         if (!gitRoot) {
             showError('File is not in a git repository');
+            return;
+        }
+
+        // Get GitHub repository URL with strict priority order
+        const repositoryUrl = await getGitHubRepositoryUrl(gitRoot, config);
+        if (!repositoryUrl) {
+            showError('Could not determine GitHub repository URL. Please configure openInGithub.repositoryUrl or ensure a GitHub remote exists.');
             return;
         }
 
