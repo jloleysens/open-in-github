@@ -48,11 +48,13 @@ The extension can be configured in VS Code settings:
 > [!IMPORTANT]
 > This extension is not published to VSCode marketplace or anywhere else. It has no automated tests and it was generated using Claude Code. Use at your own risk.
 
-Run the installation script to automatically download and install the extension:
+Run the installation script to automatically download and install the extension for Cursor and VS Code:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jloleysens/open-in-github/main/install.sh | bash
 ```
+
+When run from a local checkout, `./install.sh` installs the current local files instead of downloading from GitHub.
 
 Or download and run manually:
 
@@ -62,16 +64,16 @@ chmod +x install.sh
 ./install.sh
 ```
 
-After installation, restart Cursor for the extension to be loaded.
+After installation, restart Cursor and VS Code for the extension to be loaded.
 
 ### Manual Installation
 
 Alternatively, you can install manually:
 
 1. Clone or download this repository
-2. Copy the extension files to `~/.cursor/extensions/open-in-github/`
+2. Copy the extension files to `~/.cursor/extensions/open-in-github/` and/or `~/.vscode/extensions/open-in-github/`
 3. Run `npm install` in the extension directory
-4. Restart Cursor
+4. Restart Cursor and/or VS Code
 
 ## Troubleshooting
 

@@ -1,9 +1,12 @@
 const vscode = require('vscode');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const path = require('path');
 const { promisify } = require('util');
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+const DEFAULT_BRANCH_REMOTE = 'upstream';
+const FALLBACK_BRANCH = 'main';
 
 /**
  * Get the git repository root for a given file path
@@ -22,33 +25,68 @@ async function getGitRoot(filePath) {
 }
 
 /**
- * Get the current git branch or commit hash
+ * Check whether a branch exists on a remote.
+ * @param {string} gitRoot - The git repository root
+ * @param {string} remoteName - The remote name to check
+ * @param {string} branchName - The branch name to check
+ * @returns {Promise<boolean>} - True if the branch exists on the remote
+ */
+async function remoteBranchExists(gitRoot, remoteName, branchName) {
+    try {
+        await execFileAsync('git', [
+            'ls-remote',
+            '--exit-code',
+            '--heads',
+            remoteName,
+            branchName
+        ], { cwd: gitRoot });
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
+/**
+ * Get the GitHub ref to open, falling back to main when the local branch is not on the remote.
  * @param {string} gitRoot - The git repository root
  * @param {boolean} useCommitHash - Whether to use commit hash instead of branch name
- * @returns {Promise<string>} - The branch name or commit hash
+ * @param {string} remoteName - The remote name to check for branch existence
+ * @returns {Promise<Object>} - Object with ref, type, localBranch, remoteName, and fellBackToMain
  */
-async function getGitRef(gitRoot, useCommitHash = false) {
-    try {
-        if (useCommitHash) {
-            const { stdout } = await execAsync('git rev-parse HEAD', { cwd: gitRoot });
-            return stdout.trim();
-        } else {
-            // Try to get current branch, fallback to commit hash if detached HEAD
-            try {
-                const { stdout } = await execAsync('git branch --show-current', { cwd: gitRoot });
-                const branch = stdout.trim();
-                if (branch) {
-                    return branch;
-                }
-            } catch (error) {
-                // Fallback to commit hash if no branch
-            }
-            const { stdout } = await execAsync('git rev-parse HEAD', { cwd: gitRoot });
-            return stdout.trim();
-        }
-    } catch (error) {
-        throw new Error('Failed to get git reference');
+async function getGitHubRef(gitRoot, useCommitHash = false, remoteName = DEFAULT_BRANCH_REMOTE) {
+    if (useCommitHash) {
+        const { stdout } = await execAsync('git rev-parse HEAD', { cwd: gitRoot });
+        return {
+            ref: stdout.trim(),
+            type: 'commit',
+            localBranch: null,
+            remoteName,
+            fellBackToMain: false
+        };
     }
+
+    const { stdout } = await execAsync('git branch --show-current', { cwd: gitRoot });
+    const localBranch = stdout.trim();
+    if (!localBranch) {
+        const { stdout: commit } = await execAsync('git rev-parse HEAD', { cwd: gitRoot });
+        return {
+            ref: commit.trim(),
+            type: 'commit',
+            localBranch: null,
+            remoteName,
+            fellBackToMain: false
+        };
+    }
+
+    const existsOnRemote = await remoteBranchExists(gitRoot, remoteName, localBranch);
+    const fellBackToMain = !existsOnRemote && localBranch !== FALLBACK_BRANCH;
+    return {
+        ref: fellBackToMain ? FALLBACK_BRANCH : localBranch,
+        type: 'branch',
+        localBranch,
+        remoteName,
+        fellBackToMain
+    };
 }
 
 /**
@@ -134,13 +172,16 @@ function normalizeGitHubUrl(url) {
  * 5. null if none found
  * @param {string} gitRoot - The git repository root
  * @param {vscode.WorkspaceConfiguration} config - The workspace configuration
- * @returns {Promise<string|null>} - The GitHub repository URL or null if not found
+ * @returns {Promise<Object|null>} - The GitHub repository info or null if not found
  */
-async function getGitHubRepositoryUrl(gitRoot, config) {
+async function getGitHubRepositoryInfo(gitRoot, config) {
     // 1. Check config first (highest priority)
     const configUrl = config.get('repositoryUrl');
     if (configUrl) {
-        return configUrl;
+        return {
+            url: configUrl,
+            remoteName: DEFAULT_BRANCH_REMOTE
+        };
     }
 
     // 2. Check upstream remote
@@ -148,7 +189,10 @@ async function getGitHubRepositoryUrl(gitRoot, config) {
     if (upstreamUrl && isGitHubUrl(upstreamUrl)) {
         const normalized = normalizeGitHubUrl(upstreamUrl);
         if (normalized) {
-            return normalized;
+            return {
+                url: normalized,
+                remoteName: 'upstream'
+            };
         }
     }
 
@@ -157,7 +201,10 @@ async function getGitHubRepositoryUrl(gitRoot, config) {
     if (originUrl && isGitHubUrl(originUrl)) {
         const normalized = normalizeGitHubUrl(originUrl);
         if (normalized) {
-            return normalized;
+            return {
+                url: normalized,
+                remoteName: 'origin'
+            };
         }
     }
 
@@ -168,13 +215,27 @@ async function getGitHubRepositoryUrl(gitRoot, config) {
         if (remoteUrl && isGitHubUrl(remoteUrl)) {
             const normalized = normalizeGitHubUrl(remoteUrl);
             if (normalized) {
-                return normalized;
+                return {
+                    url: normalized,
+                    remoteName: remote
+                };
             }
         }
     }
 
     // 5. Return null if nothing found
     return null;
+}
+
+/**
+ * Get GitHub repository URL following strict priority order.
+ * @param {string} gitRoot - The git repository root
+ * @param {vscode.WorkspaceConfiguration} config - The workspace configuration
+ * @returns {Promise<string|null>} - The GitHub repository URL or null if not found
+ */
+async function getGitHubRepositoryUrl(gitRoot, config) {
+    const repositoryInfo = await getGitHubRepositoryInfo(gitRoot, config);
+    return repositoryInfo ? repositoryInfo.url : null;
 }
 
 /**
@@ -211,6 +272,22 @@ function showError(message) {
 }
 
 /**
+ * Show which GitHub ref is being opened.
+ * @param {Object} gitRefInfo - The resolved GitHub ref information
+ */
+function showOpeningRefMessage(gitRefInfo) {
+    if (gitRefInfo.type === 'commit') {
+        vscode.window.showInformationMessage(`Open in GitHub: opening on commit ${gitRefInfo.ref.substring(0, 8)}`);
+        return;
+    }
+
+    const fallbackReason = gitRefInfo.fellBackToMain
+        ? ` (local branch ${gitRefInfo.localBranch} not found on ${gitRefInfo.remoteName})`
+        : '';
+    vscode.window.showInformationMessage(`Open in GitHub: opening on branch ${gitRefInfo.ref}${fallbackReason}`);
+}
+
+/**
  * Open the current file in GitHub
  * @param {boolean} includeLineNumber - Whether to include the current line number
  */
@@ -234,14 +311,14 @@ async function openFileInGitHub(includeLineNumber = false) {
         }
 
         // Get GitHub repository URL with strict priority order
-        const repositoryUrl = await getGitHubRepositoryUrl(gitRoot, config);
-        if (!repositoryUrl) {
+        const repositoryInfo = await getGitHubRepositoryInfo(gitRoot, config);
+        if (!repositoryInfo) {
             showError('Could not determine GitHub repository URL. Please configure openInGithub.repositoryUrl or ensure a GitHub remote exists.');
             return;
         }
 
         // Get git reference (branch or commit)
-        const gitRef = await getGitRef(gitRoot, useCommitHash);
+        const gitRefInfo = await getGitHubRef(gitRoot, useCommitHash, repositoryInfo.remoteName);
 
         // Get relative path from git root
         const relativePath = getRelativePath(filePath, gitRoot);
@@ -253,11 +330,9 @@ async function openFileInGitHub(includeLineNumber = false) {
         }
 
         // Construct and open URL
-        const url = constructGitHubUrl(repositoryUrl, gitRef, relativePath, lineNumber);
+        const url = constructGitHubUrl(repositoryInfo.url, gitRefInfo.ref, relativePath, lineNumber);
+        showOpeningRefMessage(gitRefInfo);
         await openInBrowser(url);
-
-        // Show success message
-        vscode.window.showInformationMessage(`Opened in GitHub: ${relativePath}`);
     } catch (error) {
         showError(error.message);
     }
@@ -285,21 +360,20 @@ async function openRepositoryInGitHub() {
         }
 
         // Get GitHub repository URL with strict priority order
-        const repositoryUrl = await getGitHubRepositoryUrl(gitRoot, config);
-        if (!repositoryUrl) {
+        const repositoryInfo = await getGitHubRepositoryInfo(gitRoot, config);
+        if (!repositoryInfo) {
             showError('Could not determine GitHub repository URL. Please configure openInGithub.repositoryUrl or ensure a GitHub remote exists.');
             return;
         }
 
         // Get git reference
         const useCommitHash = config.get('useCommitHash', false);
-        const gitRef = await getGitRef(gitRoot, useCommitHash);
+        const gitRefInfo = await getGitHubRef(gitRoot, useCommitHash, repositoryInfo.remoteName);
 
         // Open repository root
-        const url = `${repositoryUrl}/tree/${gitRef}`;
+        const url = `${repositoryInfo.url}/tree/${gitRefInfo.ref}`;
+        showOpeningRefMessage(gitRefInfo);
         await openInBrowser(url);
-
-        vscode.window.showInformationMessage('Opened repository in GitHub');
     } catch (error) {
         showError(error.message);
     }
