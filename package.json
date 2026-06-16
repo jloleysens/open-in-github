@@ -1,7 +1,7 @@
 {
   "name": "open-in-github",
   "displayName": "Open in GitHub",
-  "description": "Open the current file in the upstream GitHub repository",
+  "description": "Open the current file in its GitHub repository",
   "version": "1.0.0",
   "publisher": "kibana-dev",
   "engines": {
@@ -14,6 +14,9 @@
     "onCommand:openInGithub.openFile"
   ],
   "main": "./extension.js",
+  "scripts": {
+    "test": "node test.js"
+  },
   "contributes": {
     "commands": [
       {
@@ -82,8 +85,8 @@
       "properties": {
         "openInGithub.repositoryUrl": {
           "type": "string",
-          "default": "https://github.com/elastic/kibana",
-          "description": "The GitHub repository URL to open files in"
+          "default": "",
+          "description": "Optional GitHub repository URL override. Leave empty to infer from git remotes."
         },
         "openInGithub.useCommitHash": {
           "type": "boolean",

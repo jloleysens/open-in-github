@@ -1,11 +1,16 @@
-const vscode = require('vscode');
+let vscode;
+try {
+    vscode = require('vscode');
+} catch (error) {
+    vscode = null;
+}
 const { exec, execFile } = require('child_process');
 const path = require('path');
 const { promisify } = require('util');
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
-const DEFAULT_BRANCH_REMOTE = 'upstream';
+const PREFERRED_REMOTES = ['upstream', 'origin'];
 const FALLBACK_BRANCH = 'main';
 
 /**
@@ -50,10 +55,10 @@ async function remoteBranchExists(gitRoot, remoteName, branchName) {
  * Get the GitHub ref to open, falling back to main when the local branch is not on the remote.
  * @param {string} gitRoot - The git repository root
  * @param {boolean} useCommitHash - Whether to use commit hash instead of branch name
- * @param {string} remoteName - The remote name to check for branch existence
+ * @param {string|null} remoteName - The remote name to check for branch existence
  * @returns {Promise<Object>} - Object with ref, type, localBranch, remoteName, and fellBackToMain
  */
-async function getGitHubRef(gitRoot, useCommitHash = false, remoteName = DEFAULT_BRANCH_REMOTE) {
+async function getGitHubRef(gitRoot, useCommitHash = false, remoteName = null) {
     if (useCommitHash) {
         const { stdout } = await execAsync('git rev-parse HEAD', { cwd: gitRoot });
         return {
@@ -73,6 +78,16 @@ async function getGitHubRef(gitRoot, useCommitHash = false, remoteName = DEFAULT
             ref: commit.trim(),
             type: 'commit',
             localBranch: null,
+            remoteName,
+            fellBackToMain: false
+        };
+    }
+
+    if (!remoteName) {
+        return {
+            ref: localBranch,
+            type: 'branch',
+            localBranch,
             remoteName,
             fellBackToMain: false
         };
@@ -107,7 +122,7 @@ function getRelativePath(filePath, gitRoot) {
  */
 async function getRemoteUrl(gitRoot, remoteName) {
     try {
-        const { stdout } = await execAsync(`git remote get-url ${remoteName}`, { cwd: gitRoot });
+        const { stdout } = await execFileAsync('git', ['remote', 'get-url', remoteName], { cwd: gitRoot });
         return stdout.trim();
     } catch (error) {
         return null;
@@ -134,9 +149,7 @@ async function getAllRemotes(gitRoot) {
  * @returns {boolean} - True if URL points to GitHub
  */
 function isGitHubUrl(url) {
-    if (!url) return false;
-    // Check for github.com in the URL
-    return /github\.com/.test(url);
+    return normalizeGitHubUrl(url) !== null;
 }
 
 /**
@@ -148,12 +161,13 @@ function normalizeGitHubUrl(url) {
     if (!url) return null;
 
     try {
-        // Handle different URL formats
+        const trimmedUrl = url.trim();
+
         // https://github.com/org/repo
         // https://github.com/org/repo.git
         // git@github.com:org/repo.git
         // ssh://git@github.com/org/repo.git
-        let match = url.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+        let match = trimmedUrl.match(/(?:^|@|\/\/)github\.com[:/]([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i);
         if (match) {
             return `https://github.com/${match[1]}/${match[2]}`;
         }
@@ -164,8 +178,90 @@ function normalizeGitHubUrl(url) {
 }
 
 /**
+ * Read repositoryUrl only when it was explicitly configured by the user/workspace.
+ * Extension defaults are intentionally ignored so stale manifest defaults cannot override remotes.
+ * @param {vscode.WorkspaceConfiguration} config - The workspace configuration
+ * @returns {string|null} - Configured repository URL or null when remotes should be inferred
+ */
+function getConfiguredRepositoryUrl(config) {
+    const normalizeConfigValue = (value) => {
+        if (typeof value !== 'string') {
+            return null;
+        }
+
+        const trimmedValue = value.trim();
+        return trimmedValue || null;
+    };
+
+    if (config && typeof config.inspect === 'function') {
+        const inspection = config.inspect('repositoryUrl');
+        if (inspection) {
+            const explicitValueKeys = [
+                'workspaceFolderLanguageValue',
+                'workspaceFolderValue',
+                'workspaceLanguageValue',
+                'workspaceValue',
+                'globalLanguageValue',
+                'globalValue'
+            ];
+
+            for (const key of explicitValueKeys) {
+                if (inspection[key] !== undefined) {
+                    return normalizeConfigValue(inspection[key]);
+                }
+            }
+
+            return null;
+        }
+    }
+
+    if (config && typeof config.get === 'function') {
+        return normalizeConfigValue(config.get('repositoryUrl', ''));
+    }
+
+    return null;
+}
+
+/**
+ * Get a normalized GitHub repository URL for a remote.
+ * @param {string} gitRoot - The git repository root
+ * @param {string} remoteName - The remote name
+ * @returns {Promise<Object|null>} - The GitHub repository info or null if remote is missing or not GitHub
+ */
+async function getGitHubRepositoryInfoForRemote(gitRoot, remoteName) {
+    const remoteUrl = await getRemoteUrl(gitRoot, remoteName);
+    const normalized = normalizeGitHubUrl(remoteUrl);
+    if (!normalized) {
+        return null;
+    }
+
+    return {
+        url: normalized,
+        remoteName
+    };
+}
+
+/**
+ * Find the configured git remote for a normalized GitHub repository URL.
+ * @param {string} gitRoot - The git repository root
+ * @param {string} repositoryUrl - The normalized GitHub repository URL
+ * @returns {Promise<string|null>} - Matching remote name or null if none match
+ */
+async function getRemoteNameForRepositoryUrl(gitRoot, repositoryUrl) {
+    const allRemotes = await getAllRemotes(gitRoot);
+    for (const remote of allRemotes) {
+        const remoteUrl = await getRemoteUrl(gitRoot, remote);
+        if (normalizeGitHubUrl(remoteUrl) === repositoryUrl) {
+            return remote;
+        }
+    }
+
+    return null;
+}
+
+/**
  * Get GitHub repository URL following strict priority order:
- * 1. Configuration setting (if exists)
+ * 1. Configuration setting (if set)
  * 2. Upstream remote (if exists and points to GitHub)
  * 3. Origin remote (if exists and points to GitHub)
  * 4. First GitHub remote from all remotes
@@ -175,55 +271,34 @@ function normalizeGitHubUrl(url) {
  * @returns {Promise<Object|null>} - The GitHub repository info or null if not found
  */
 async function getGitHubRepositoryInfo(gitRoot, config) {
-    // 1. Check config first (highest priority)
-    const configUrl = config.get('repositoryUrl');
-    if (configUrl) {
+    const configUrl = getConfiguredRepositoryUrl(config);
+    const normalizedConfigUrl = normalizeGitHubUrl(configUrl);
+    if (normalizedConfigUrl) {
         return {
-            url: configUrl,
-            remoteName: DEFAULT_BRANCH_REMOTE
+            url: normalizedConfigUrl,
+            remoteName: await getRemoteNameForRepositoryUrl(gitRoot, normalizedConfigUrl)
         };
     }
 
-    // 2. Check upstream remote
-    const upstreamUrl = await getRemoteUrl(gitRoot, 'upstream');
-    if (upstreamUrl && isGitHubUrl(upstreamUrl)) {
-        const normalized = normalizeGitHubUrl(upstreamUrl);
-        if (normalized) {
-            return {
-                url: normalized,
-                remoteName: 'upstream'
-            };
+    for (const remote of PREFERRED_REMOTES) {
+        const repositoryInfo = await getGitHubRepositoryInfoForRemote(gitRoot, remote);
+        if (repositoryInfo) {
+            return repositoryInfo;
         }
     }
 
-    // 3. Check origin remote
-    const originUrl = await getRemoteUrl(gitRoot, 'origin');
-    if (originUrl && isGitHubUrl(originUrl)) {
-        const normalized = normalizeGitHubUrl(originUrl);
-        if (normalized) {
-            return {
-                url: normalized,
-                remoteName: 'origin'
-            };
-        }
-    }
-
-    // 4. Check all remotes for first GitHub URL
     const allRemotes = await getAllRemotes(gitRoot);
     for (const remote of allRemotes) {
-        const remoteUrl = await getRemoteUrl(gitRoot, remote);
-        if (remoteUrl && isGitHubUrl(remoteUrl)) {
-            const normalized = normalizeGitHubUrl(remoteUrl);
-            if (normalized) {
-                return {
-                    url: normalized,
-                    remoteName: remote
-                };
-            }
+        if (PREFERRED_REMOTES.includes(remote)) {
+            continue;
+        }
+
+        const repositoryInfo = await getGitHubRepositoryInfoForRemote(gitRoot, remote);
+        if (repositoryInfo) {
+            return repositoryInfo;
         }
     }
 
-    // 5. Return null if nothing found
     return null;
 }
 
@@ -571,5 +646,12 @@ function deactivate() {
 
 module.exports = {
     activate,
-    deactivate
+    deactivate,
+    _test: {
+        getConfiguredRepositoryUrl,
+        getGitHubRepositoryInfo,
+        getRemoteNameForRepositoryUrl,
+        isGitHubUrl,
+        normalizeGitHubUrl
+    }
 };

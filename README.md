@@ -1,6 +1,6 @@
 # Open in GitHub Extension
 
-A simple VS Code extension that allows you to quickly open the current file in the upstream GitHub repository.
+A simple VS Code extension that allows you to quickly open the current file in its GitHub repository.
 
 > [!IMPORTANT]
 > This extension is not published to VSCode marketplace or anywhere else. It has no automated tests and it was generated using Claude Code. Use at your own risk.
@@ -32,14 +32,20 @@ A simple VS Code extension that allows you to quickly open the current file in t
 
 The extension can be configured in VS Code settings:
 
-- `openInGithub.repositoryUrl`: The GitHub repository URL (default: `https://github.com/elastic/kibana`)
+- `openInGithub.repositoryUrl`: Optional GitHub repository URL override. Leave empty to infer from git remotes.
 - `openInGithub.useCommitHash`: Use commit hash instead of branch name in URLs (default: `false`)
+
+When `openInGithub.repositoryUrl` is empty, the extension discovers the repository from configured git remotes in this order:
+
+1. `upstream`, if it points to GitHub
+2. `origin`, if it points to GitHub
+3. The first other remote that points to GitHub
 
 ## Requirements
 
 - The file must be in a git repository
 - Git must be available in the system PATH
-- The repository must have a remote origin pointing to GitHub
+- The repository must have at least one GitHub remote, unless `openInGithub.repositoryUrl` is configured
 
 ## Installation
 
@@ -79,8 +85,12 @@ Alternatively, you can install manually:
 
 - **"File is not in a git repository"**: Make sure the file is within a git repository
 - **"Failed to get git reference"**: Ensure git is installed and accessible from the command line
-- **URL doesn't open**: Check that the repository URL is correct and accessible
+- **URL doesn't open**: Check that the repository URL or git remote URL is correct and accessible
 
 ## Development
 
-This extension is built for the Kibana development environment and is configured to work with the Elastic Kibana repository by default.
+Run the tests with:
+
+```bash
+npm test
+```
